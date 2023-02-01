@@ -1,22 +1,18 @@
+extern crate csv;
+extern crate lazy_static;
+extern crate regex;
 extern crate reqwest;
 extern crate scraper;
-extern crate regex;
-extern crate lazy_static;
-extern crate csv;
-extern crate serde;
 
-use scraper::{Html, Selector};
-use regex::Regex;
 use lazy_static::lazy_static;
-use serde::Serialize;
-
-// https://eldenring.wiki.fextralife.com/Weapons
-// weapon page url example = https://eldenring.wiki.fextralife.com/Academy+Glintstone+Staff
+use regex::Regex;
+use scraper::{Html, Selector};
+use std::env;
 
 static ELDEN_RING_WEAPONS_URL: &str = "https://eldenring.wiki.fextralife.com/Weapons+Comparison+Tables";
-static ELDEN_RING_BASE_LINK: &str = "https://eldenring.wiki.fextralife.com/";
+static ELDEN_RING_BASE_LINK: &str = "https://eldenring.wiki.fextralife.com/"; // weapon page url example = https://eldenring.wiki.fextralife.com/Academy+Glintstone+Staff
 
-#[derive(Serialize)]
+#[derive(Debug)]
 struct Requirements {
     str: u8,
     dex: u8,
@@ -25,7 +21,7 @@ struct Requirements {
     arc: u8,    
 }
 
-#[derive(Serialize)]
+#[derive(Debug)]
 struct Scalings {
     str: char,
     dex: char,
@@ -34,7 +30,7 @@ struct Scalings {
     arc: char,
 }
 
-#[derive(Serialize)]
+#[derive(Debug)]
 struct Weapon {
     category: String,
     name: String,
@@ -43,31 +39,95 @@ struct Weapon {
 }
 
 fn main() {
-    let mut weapons_database: Vec<Weapon> = Vec::new();
-    
-    scrape_weapon_data(ELDEN_RING_WEAPONS_URL, &mut weapons_database);
+    let args: Vec<String> = env::args().collect();
 
-    match csv::Writer::from_path("elden_builder.csv") {
-        Ok(mut wrt) => {
-            match wrt.write_record(&["Category", "Name", "Strength req", "Dexterity req", "Intelligence req", "Faith req", "Arcane req", "Strength scl", "Dexterity scl", "Intelligence scl", "Faith scl", "Arcane scl"]) {
-                Ok(_) => println!("Header written!"),
-                Err(_) => println!("Something went wrong when writing the header..."),
+    dbg!(&args);
+    
+    let mut filepath: String = String::from("");
+    
+    if args.len() >= 2 {
+        filepath = String::from(&args[1]);
+    }
+    
+    let mut weapons_database: Vec<Weapon> = Vec::new();
+
+    // Not providing a filepath will read the default path
+    if filepath.is_empty() {
+        match csv::Writer::from_path("elden_builder.csv") {
+            Ok(mut wrt) => {
+                scrape_weapon_data(ELDEN_RING_WEAPONS_URL, &mut weapons_database);
+                match wrt.write_record(&["Category", "Name", "Strength req", "Dexterity req", "Intelligence req", "Faith req", "Arcane req", "Strength scl", "Dexterity scl", "Intelligence scl", "Faith scl", "Arcane scl"]) {
+                    Ok(_) => println!("Header written!"),
+                    Err(_) => println!("Something went wrong when writing the header..."),
+                }
+                for weapon in &weapons_database {
+                    match wrt.write_record(&[
+                        &weapon.category, 
+                        &weapon.name, 
+                        &weapon.requirements.str.to_string(), &weapon.requirements.dex.to_string(), &weapon.requirements.int.to_string(), &weapon.requirements.fai.to_string(), &weapon.requirements.arc.to_string(),
+                        &weapon.scalings.str.to_string(), &weapon.scalings.dex.to_string(), &weapon.scalings.int.to_string(), &weapon.scalings.fai.to_string(), &weapon.scalings.arc.to_string()
+                        ]) {
+                            Ok(_) => println!("{} has been written!", &weapon.name),
+                            Err(_) => println!("Something went wrong when writing {}...", &weapon.name),
+                        }
+                }
+                println!("Got {} weapons!", &weapons_database.len());
+            },
+            Err(_) => println!("Could not open csv file for writing..."),
+        };
+    } else {
+        fill_weapons_database_from_csv(&filepath, &mut weapons_database);
+        for weapon in weapons_database {
+            println!("{:?}", weapon);
+        }
+    }
+}
+
+fn fill_weapons_database_from_csv(filepath: &String, weapons_database: &mut Vec<Weapon>) {
+    match csv::Reader::from_path(filepath) {
+        Ok(mut rdr) => {
+            for weapon_record in rdr.records() {
+                match weapon_record {
+                    Ok(weapon_record) => { 
+                        let mut weapon = Weapon {
+                            category: String::from(""),
+                            name: String::from(""),
+                            requirements: Requirements {
+                                str: 0,
+                                dex: 0,
+                                int: 0,
+                                fai: 0,
+                                arc: 0,
+                            },
+                            scalings: Scalings {
+                                str: 'z',
+                                dex: 'z',
+                                int: 'z',
+                                fai: 'z',
+                                arc: 'z',
+                            },
+                        };
+                        // Ugly stuff
+                        weapon.category = weapon_record[0].to_string();
+                        weapon.name = weapon_record[1].to_string();
+                        weapon.requirements.str = weapon_record[2].parse().unwrap();
+                        weapon.requirements.dex = weapon_record[3].parse().unwrap();
+                        weapon.requirements.int = weapon_record[4].parse().unwrap();
+                        weapon.requirements.fai = weapon_record[5].parse().unwrap();
+                        weapon.requirements.arc = weapon_record[6].parse().unwrap();
+                        weapon.scalings.str = weapon_record[7].parse().unwrap();
+                        weapon.scalings.dex = weapon_record[8].parse().unwrap();
+                        weapon.scalings.int = weapon_record[9].parse().unwrap();
+                        weapon.scalings.fai = weapon_record[10].parse().unwrap();
+                        weapon.scalings.arc = weapon_record[11].parse().unwrap();
+                        weapons_database.push(weapon);
+                     },
+                    Err(_) => { println!("Could not read a record from {}", filepath) }
+                }
             }
-            for weapon in &weapons_database {
-                match wrt.write_record(&[
-                    &weapon.category, 
-                    &weapon.name, 
-                    &weapon.requirements.str.to_string(), &weapon.requirements.dex.to_string(), &weapon.requirements.int.to_string(), &weapon.requirements.fai.to_string(), &weapon.requirements.arc.to_string(),
-                    &weapon.scalings.str.to_string(), &weapon.scalings.dex.to_string(), &weapon.scalings.int.to_string(), &weapon.scalings.fai.to_string(), &weapon.scalings.arc.to_string()
-                    ]) {
-                        Ok(_) => println!("{} has been written!", &weapon.name),
-                        Err(_) => println!("Something went wrong when writing {}...", &weapon.name),
-                    }
-            }
-            println!("Got {} weapons!", &weapons_database.len());
         },
-        Err(_) => println!("Could not open csv file..."),
-    };
+        Err(_) => { println!("Could not open {}", filepath) }
+    }
 }
 
 fn scrape_weapon_data(url: &str, weapons_database: &mut Vec<Weapon>) {
@@ -148,12 +208,12 @@ fn scrape_weapon_page(url: &str, weapon_name: &str, weapons_database: &mut Vec<W
             "int" => weapon.requirements.int = val,
             "fai" => weapon.requirements.fai = val,
             "arc" => weapon.requirements.arc = val,
-            _ => { println!("{} is not a skill name", skill_names[i].as_str()); assert!(false); },
+            _ => { println!("{} is not a stat name", skill_names[i].as_str()); assert!(false); },
         }
     }
 
     if weapon.name == String::from("Steel-Wire Torch") {
-        weapon.category = String::from("Torch"); // The weapon category for this torch is 2.5 for some reason so I just hardcoded it
+        weapon.category = String::from("Torch"); // The weapon category for this specific torch is 2.5 for some reason so I just hardcoded it
     }
 
     weapons_database.push(weapon);
